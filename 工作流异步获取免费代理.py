@@ -20,15 +20,16 @@ headers = {
 }
 
 
-def parse_fanqieip(my_queue, page_text, start_time): #解析网页内容，获取代理信息并返回
+def parse(my_queue, page_text, ips_xpath, ports_xpath,
+          locations_xpath, start_time): #解析网页内容，获取代理信息并返回
     proxies = []
     etree = html.etree
     parser = etree.HTMLParser(encoding="utf-8")
     # str = etree.parse('./page_text.html',parser=parser)
     str = etree.HTML(page_text, parser=parser)
-    ips = str.xpath('//tr[@data-index>"0"]/td[1]/div/text()')
-    ports = str.xpath('//tr[@data-index>"0"]/td[2]/div/text()')
-    locations = str.xpath('//tr[@data-index>"0"]/td[3]/div/text()')
+    ips = str.xpath(ips_xpath)
+    ports = str.xpath(ports_xpath)
+    locations = str.xpath(locations_xpath)
     if len(ips) != len(ports) or  len(ips) != len(locations):
         print(f'ip数据不匹配 ips={len(ips)},ports={len(ports)},locations={len(locations)}')
         return None
@@ -41,13 +42,29 @@ def parse_fanqieip(my_queue, page_text, start_time): #解析网页内容，获�
     return proxies
 
 
-async def fetch(my_queue, loop, url, conn, sleep_time):
+async def fetch1(my_queue, loop, url, conn, sleep_time):
     start_time = time.time()    #调用访问网页函数，获取网页内容，调用解析网页函数，获取代理信息
     page_text = await get_page_text(loop, url, 'read', conn, sleep_time)
     if page_text == None:
         print(f'获取网页{url}错误，内容为空')
         return None
-    proxies = parse_fanqieip(my_queue, page_text, start_time)
+    ips_xpath = '//tr[@data-index>"0"]/td[1]/div/text()'
+    ports_xpath = '//tr[@data-index>"0"]/td[2]/div/text()'
+    locations_xpath = '//tr[@data-index>"0"]/td[3]/div/text()'
+    proxies = parse(my_queue, page_text, ips_xpath, ports_xpath, locations_xpath, start_time)
+    return proxies
+
+
+async def fetch2(my_queue, loop, url, conn, sleep_time):
+    start_time = time.time()    #调用访问网页函数，获取网页内容，调用解析网页函数，获取代理信息
+    page_text = await get_page_text(loop, url, 'read', conn, sleep_time)
+    if page_text == None:
+        print(f'获取网页{url}错误，内容为空')
+        return None
+    ips_xpath = '//td[@data-title="IP"]/text()'
+    ports_xpath = '//td[@data-title="PORT"]/text()'
+    locations_xpath = '//td[@data-title="位置"]/text()'
+    proxies = parse(my_queue, page_text, ips_xpath, ports_xpath, locations_xpath, start_time)
     return proxies
 
 
@@ -94,15 +111,20 @@ async def check(my_queue, loop, url, conn, item):
     return item
 
 
-def work1(my_queue_1):  #page max is 1668流水线第一步，获取代理信息，解析网页时写入流水线
-    start_time = time.time()
-    urls = [f'https://www.fanqieip.com/free/{page}' for page in range(1,10)]
+def work1(my_queue_1):  #流水线第一步，获取代理信息，解析网页时写入流水线
+    start_time = time.time()    #page1最大1668,page2最大3956
+    urls1 = [f'https://www.fanqieip.com/free/{page}' for page in range(1,2)]
+    urls2 = [f'https://www.kuaidaili.com/free/intr/{page}' for page in range(1, 2)]
     put_loop = start_thread(name='work1_thread')
     conn = aiohttp.TCPConnector(loop=put_loop, limit=10, limit_per_host=10)
     futures = []
-    for url in urls:    #异步调用处理网页函数，获取代理信息，并写入流水线
+    for url in urls1:    #异步调用处理网页函数，获取代理信息，并写入流水线
         future = asyncio.run_coroutine_threadsafe(
-            fetch(my_queue_1, put_loop, url, conn, urls.index(url)), put_loop)
+            fetch1(my_queue_1, put_loop, url, conn, urls1.index(url)), put_loop)
+        futures.append(future)
+    for url in urls2:    #异步调用处理网页函数，获取代理信息，并写入流水线
+        future = asyncio.run_coroutine_threadsafe(
+            fetch2(my_queue_1, put_loop, url, conn, urls2.index(url)), put_loop)
         futures.append(future)
     for future in futures:   #阻塞线程，直到所有任务返回结果
         print(f'work1 返回值:{future.result()}')
